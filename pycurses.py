@@ -1,5 +1,25 @@
 import sys,os
 import curses
+from scapy.all import sniff, TCP, UDP, ICMP
+
+def process_packet(packet):
+    print(f"Packet: {packet.summary()}")  # Print all packets
+
+    if TCP in packet:
+        # Check for TCP anomalies (e.g., suspicious flags)
+        if packet[TCP].flags == 'F':
+            print(f"Suspicious TCP packet detected: {packet.summary()}")
+    elif UDP in packet:
+        # Check for UDP anomalies (e.g., large size)
+        if packet[UDP].len > 1500:
+            print(f"Suspicious UDP packet detected: {packet.summary()}")
+    elif ICMP in packet:
+        # Check for ICMP anomalies (e.g., type and code)
+        if packet[ICMP].type != 0 or packet[ICMP].code != 0:
+            print(f"Suspicious ICMP packet detected: {packet.summary()}")
+
+
+sniff(prn=process_packet)
 
 def draw_menu(stdscr):
     k = 0
