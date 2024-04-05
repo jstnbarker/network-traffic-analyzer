@@ -4,11 +4,14 @@ from scapy.all import sniff, TCP, UDP, ICMP
 
 def process_packet(packet):
     print(f"Packet: {packet.summary()}")  # Print all packets
-
+    global syn_counter #global variable to track amount of syn packets
     if TCP in packet:
         # Check for TCP anomalies (e.g., suspicious flags)
-        if packet[TCP].flags == 'F':
-            print(f"Suspicious TCP packet detected: {packet.summary()}")
+        if packet[TCP].flags == 'S': # Check for SYN flag
+            syn_counter += 1
+            if syn_counter > 1000: #if more than 1000 syn packets are detected, print a warning
+                print(f"Possible SYN flood detected: {packet.summary()}")
+            print(f"Suspicious TCP packets detected: {packet.summary()}")
     elif UDP in packet:
         # Check for UDP anomalies (e.g., large size)
         if packet[UDP].len > 1500:
