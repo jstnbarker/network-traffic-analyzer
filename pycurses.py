@@ -1,17 +1,17 @@
 import sys,os
 import curses
-from scapy.all import sniff, TCP, UDP, ICMP
+from scapy.all import sniff, TCP, UDP, ICMP, rdpcap
 
 def process_packet(packet):
     print(f"Packet: {packet.summary()}")  # Print all packets
     global syn_counter #global variable to track amount of syn packets
+    syn_counter = 0
     if TCP in packet:
         # Check for TCP anomalies (e.g., suspicious flags)
         if packet[TCP].flags == 'S': # Check for SYN flag
             syn_counter += 1
             if syn_counter > 1000: #if more than 1000 syn packets are detected, print a warning
                 print(f"Possible SYN flood detected: {packet.summary()}")
-            print(f"Suspicious TCP packets detected: {packet.summary()}")
     elif UDP in packet:
         # Check for UDP anomalies (e.g., large size)
         if packet[UDP].len > 1500:
@@ -21,8 +21,17 @@ def process_packet(packet):
         if packet[ICMP].type != 0 or packet[ICMP].code != 0:
             print(f"Suspicious ICMP packet detected: {packet.summary()}")
 
+# Check if pcap or pcapng file name is provided
+if len(sys.argv) < 2:
+    print("Please provide the pcap or pcapng file name as a command-line argument.")
+    sys.exit(1)
 
-sniff(prn=process_packet)
+# Read packets from pcap or pcapng file
+packets = rdpcap(sys.argv[1])
+
+# Process each packet
+for packet in packets:
+    process_packet(packet)
 
 def draw_menu(stdscr):
     k = 0
