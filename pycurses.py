@@ -1,124 +1,133 @@
 import sys,os
 import curses
-from scapy.all import sniff, TCP, UDP, ICMP, rdpcap
+from scapy.all import sniff, TCP, UDP, ICMP, DNS, DNSQR, rdpcap
 
-def process_packet(packet):
-    print(f"Packet: {packet.summary()}")  # Print all packets
-    global syn_counter #global variable to track amount of syn packets
-    syn_counter = 0
+# Initialize counters and state
+syn_counter = 0
+udp_counter = 0
+icmp_counter = 0
+icmp_echo_reply_counter = 0
+port_scan_counter = {}
+slowloris_state = {}
+dns_amplification_state = {}
+
+def process_packet(packet, print_all, print_attacks, print_tcp, print_udp, print_icmp):
+    global syn_counter, udp_counter, icmp_counter, icmp_echo_reply_counter, port_scan_counter
+    if print_all:
+        print(f"Packet: {packet.summary()}")  # Print all packets
     if TCP in packet:
         # Check for TCP anomalies (e.g., suspicious flags)
         if packet[TCP].flags == 'S': # Check for SYN flag
             syn_counter += 1
             if syn_counter > 1000: #if more than 1000 syn packets are detected, print a warning
                 print(f"Possible SYN flood detected: {packet.summary()}")
+        # Check for Null, Xmas and FIN scans
+        if packet[TCP].flags == 0 or packet[TCP].flags == 'FPU' or packet[TCP].flags == 'F':
+            print(f"Possible TCP Null, Xmas or FIN scan detected: {packet.summary()}")
+        # Check for port scanning
+        if packet[TCP].flags == 'S' and packet[TCP].dport not in port_scan_counter:
+            port_scan_counter[packet[TCP].dport] = 1
+        elif packet[TCP].flags == 'S':
+            port_scan_counter[packet[TCP].dport] += 1
+            if port_scan_counter[packet[TCP].dport] > 100: # Threshold for port scanning
+                print(f"Possible port scanning detected: {packet.summary()}")
+        if packet[TCP].flags == 'S':
+            if packet[TCP].sport not in slowloris_state:
+                slowloris_state[packet[TCP].sport] = 1
+            else:
+                slowloris_state[packet[TCP].sport] += 1
+            if slowloris_state[packet[TCP].sport] > 100: # Threshold for Slowloris attack
+                print(f"Possible Slowloris attack detected: {packet.summary()}")
+        if print_tcp:
+            print(f"TCP Packet: {packet.summary()}")
+
+
     elif UDP in packet:
         # Check for UDP anomalies (e.g., large size)
         if packet[UDP].len > 1500:
             print(f"Suspicious UDP packet detected: {packet.summary()}")
+        # Check for UDP flood
+        udp_counter += 1
+        if udp_counter > 1000: # Threshold for UDP flood
+            print(f"Possible UDP flood detected: {packet.summary()}")
+        if DNS in packet and packet[DNS].qr == 0 and isinstance(packet[DNS].qd, DNSQR):
+            if packet[DNS].qd.qname not in dns_amplification_state:
+                dns_amplification_state[packet[DNS].qd.qname] = 1
+            else:
+                dns_amplification_state[packet[DNS].qd.qname] += 1
+            if dns_amplification_state[packet[DNS].qd.qname] > 100: # Threshold for DNS amplification attack
+                print(f"Possible DNS amplification attack detected: {packet.summary()}")
+        if print_udp:
+            print(f"UDP Packet: {packet.summary()}")
+
+
     elif ICMP in packet:
         # Check for ICMP anomalies (e.g., type and code)
         if packet[ICMP].type != 0 or packet[ICMP].code != 0:
             print(f"Suspicious ICMP packet detected: {packet.summary()}")
+        # Check for ICMP flood
+        icmp_counter += 1
+        if icmp_counter > 1000: # Threshold for ICMP flood
+            print(f"Possible ICMP flood detected: {packet.summary()}")
+        # Check for potential Smurf attack
+        if packet[ICMP].type == 0: # ICMP Echo Reply
+            icmp_echo_reply_counter += 1
+            if icmp_echo_reply_counter > 1000: # Threshold for potential Smurf attack
+                print(f"Potential Smurf attack detected: {packet.summary()}")
+        if print_icmp:
+            print(f"ICMP Packet: {packet.summary()}")
 
-# Check if pcap or pcapng file name is provided
-if len(sys.argv) < 2:
-    print("Please provide the pcap or pcapng file name as a command-line argument.")
-    sys.exit(1)
+def print_menu():
+    print("1. Print all packets")
+    print("2. Print only packets related to attacks")
+    print("3. Print only TCP, UDP, or ICMP packets")
+    print("4. Exit")
 
-# Read packets from pcap or pcapng file
-packets = rdpcap(sys.argv[1])
-
-# Process each packet
-for packet in packets:
-    process_packet(packet)
-
-def draw_menu(stdscr):
-    k = 0
-    cursor_x = 0
-    cursor_y = 0
-
-    # Clear and refresh the screen for a blank canvas
-    stdscr.clear()
-    stdscr.refresh()
-
-    # Start colors in curses
-    curses.start_color()
-    curses.init_pair(1, curses.COLOR_CYAN, curses.COLOR_BLACK)
-    curses.init_pair(2, curses.COLOR_RED, curses.COLOR_BLACK)
-    curses.init_pair(3, curses.COLOR_BLACK, curses.COLOR_WHITE)
-
-    # Loop where k is the last character pressed
-    while (k != ord('q')):
-
-        # Initialization
-        stdscr.clear()
-        height, width = stdscr.getmaxyx()
-
-        if k == curses.KEY_DOWN:
-            cursor_y = cursor_y + 1
-        elif k == curses.KEY_UP:
-            cursor_y = cursor_y - 1
-        elif k == curses.KEY_RIGHT:
-            cursor_x = cursor_x + 1
-        elif k == curses.KEY_LEFT:
-            cursor_x = cursor_x - 1
-
-        cursor_x = max(0, cursor_x)
-        cursor_x = min(width-1, cursor_x)
-
-        cursor_y = max(0, cursor_y)
-        cursor_y = min(height-1, cursor_y)
-
-        # Declaration of strings
-        title = "Curses example"[:width-1]
-        subtitle = "Written by Clay McLeod"[:width-1]
-        keystr = "Last key pressed: {}".format(k)[:width-1]
-        statusbarstr = "Press 'q' to exit | STATUS BAR | Pos: {}, {}".format(cursor_x, cursor_y)
-        if k == 0:
-            keystr = "No key press detected..."[:width-1]
-
-        # Centering calculations
-        start_x_title = int((width // 2) - (len(title) // 2) - len(title) % 2)
-        start_x_subtitle = int((width // 2) - (len(subtitle) // 2) - len(subtitle) % 2)
-        start_x_keystr = int((width // 2) - (len(keystr) // 2) - len(keystr) % 2)
-        start_y = int((height // 2) - 2)
-
-        # Rendering some text
-        whstr = "Width: {}, Height: {}".format(width, height)
-        stdscr.addstr(0, 0, whstr, curses.color_pair(1))
-
-        # Render status bar
-        stdscr.attron(curses.color_pair(3))
-        stdscr.addstr(height-1, 0, statusbarstr)
-        stdscr.addstr(height-1, len(statusbarstr), " " * (width - len(statusbarstr) - 1))
-        stdscr.attroff(curses.color_pair(3))
-
-        # Turning on attributes for title
-        stdscr.attron(curses.color_pair(2))
-        stdscr.attron(curses.A_BOLD)
-
-        # Rendering title
-        stdscr.addstr(start_y, start_x_title, title)
-
-        # Turning off attributes for title
-        stdscr.attroff(curses.color_pair(2))
-        stdscr.attroff(curses.A_BOLD)
-
-        # Print rest of text
-        stdscr.addstr(start_y + 1, start_x_subtitle, subtitle)
-        stdscr.addstr(start_y + 3, (width // 2) - 2, '-' * 4)
-        stdscr.addstr(start_y + 5, start_x_keystr, keystr)
-        stdscr.move(cursor_y, cursor_x)
-
-        # Refresh the screen
-        stdscr.refresh()
-
-        # Wait for next input
-        k = stdscr.getch()
+def print_protocol_menu():
+    print("1. Print only TCP packets")
+    print("2. Print only UDP packets")
+    print("3. Print only ICMP packets")
+    print("4. Back to main menu")
 
 def main():
-    curses.wrapper(draw_menu)
+    # Check if pcap or pcapng file name is provided
+    if len(sys.argv) < 2:
+        print("Please provide the pcap or pcapng file name as a command-line argument.")
+        sys.exit(1)
+
+    # Read packets from pcap or pcapng file
+    packets = rdpcap(sys.argv[1])
+
+    while True:
+        print_menu()
+        choice = input("Enter your choice: ")
+        if choice == '1':
+            for packet in packets:
+                process_packet(packet, print_all=True, print_attacks=False, print_tcp=False, print_udp=False, print_icmp=False)
+        elif choice == '2':
+            for packet in packets:
+                process_packet(packet, print_all=False, print_attacks=True, print_tcp=False, print_udp=False, print_icmp=False)
+        elif choice == '3':
+            while True:
+                print_protocol_menu()
+                protocol_choice = input("Enter your choice: ")
+                if protocol_choice == '1':
+                    for packet in packets:
+                        process_packet(packet, print_all=False, print_attacks=False, print_tcp=True, print_udp=False, print_icmp=False)
+                elif protocol_choice == '2':
+                    for packet in packets:
+                        process_packet(packet, print_all=False, print_attacks=False, print_tcp=False, print_udp=True, print_icmp=False)
+                elif protocol_choice == '3':
+                    for packet in packets:
+                        process_packet(packet, print_all=False, print_attacks=False, print_tcp=False, print_udp=False, print_icmp=True)
+                elif protocol_choice == '4':
+                    break
+                else:
+                    print("Invalid choice. Please enter a number between 1 and 4.")
+        elif choice == '4':
+            break
+        else:
+            print("Invalid choice. Please enter a number between 1 and 4.")
 
 if __name__ == "__main__":
     main()
