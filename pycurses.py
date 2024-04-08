@@ -1,8 +1,9 @@
 import sys, os
 import curses
 from scapy.all import *
-from scapy.layers.dns import DNS
+from scapy.layers.dns import DNS, DNSQR
 from scapy.layers.inet import TCP, UDP, ICMP, IP
+from scapy.packet import *
 
 # Initialize counters and state
 syn_counter = 0
@@ -12,6 +13,7 @@ icmp_echo_reply_counter = 0
 port_scan_counter = {}
 slowloris_state = {}
 dns_amplification_state = {}
+
 
 def process_packet(packet, print_all, print_attacks, print_tcp, print_udp, print_icmp):
     global syn_counter, udp_counter, icmp_counter, icmp_echo_reply_counter, port_scan_counter
@@ -26,13 +28,6 @@ def process_packet(packet, print_all, print_attacks, print_tcp, print_udp, print
         # Check for Null, Xmas and FIN scans
         if packet[TCP].flags == 0 or packet[TCP].flags == 'FPU' or packet[TCP].flags == 'F':
             print(f"Possible TCP Null, Xmas or FIN scan detected: {packet.summary()}")
-        # Check for port scanning
-        if packet[TCP].flags == 'S' and packet[TCP].dport not in port_scan_counter:
-            port_scan_counter[packet[TCP].dport] = 1
-        elif packet[TCP].flags == 'S':
-            port_scan_counter[packet[TCP].dport] += 1
-            if port_scan_counter[packet[TCP].dport] > 100:  # Threshold for port scanning
-                print(f"Possible port scanning detected: {packet.summary()}")
         if packet[TCP].flags == 'S':
             if packet[TCP].sport not in slowloris_state:
                 slowloris_state[packet[TCP].sport] = 1
@@ -93,27 +88,47 @@ def print_protocol_menu():
     print("3. Print only ICMP packets")
     print("4. Back to main menu")
 
+
 class PortscanDetector:
-    unique_ips = []
+    unique_sources = []
+    unique_destinations = []
     packetList = []
 
     def __init__(self, packet_list):
         self.packetList = packet_list
         for thisPacket in packet_list:
             if TCP in thisPacket:
-                if thisPacket[IP].src not in self.unique_ips:
-                    self.unique_ips.append(thisPacket[IP].src)
+                if thisPacket[IP].src not in self.unique_sources:
+                    self.unique_sources.append(thisPacket[IP].src)
+
+    def sort_by_time(self, x):
+        return x.time
+
+    def get_min_and_max_port(self, packetlist):
+        minmax = [65565, 0]
+        for packet in packetlist:
+            if packet[TCP].dport > minmax[1]:
+                minmax[1] = packet[TCP].dport
+            if packet[TCP].dport < minmax[0]:
+                minmax[0] = packet[TCP].dport
+        return minmax
 
     def analyze(self):
-        for ip in self.unique_ips:
-            unique_dports=[]
+        for source_ip in self.unique_sources:
+            p = []
             for packet in self.packetList:
                 if TCP in packet:
-                    if ip in packet[IP].src:
-                        if packet[TCP].dport not in unique_dports:
-                            unique_dports.append(packet[TCP].dport)
-            if len(unique_dports) > 300:
-                print("Detected potential recon portscan from", ip)
+                    if source_ip in packet[IP].src and packet[TCP].seq == 0:
+                        if packet[TCP].dport not in p:
+                            p.append(packet)
+                    p.sort(key=self.sort_by_time)
+                    if len(p) >= 300 and (p[len(p)-1].time - p[0].time) < 0.1:
+                        minmax = self.get_min_and_max_port(p)
+                        print("Detected", len(p), "ports probed by", source_ip, "between",
+                              minmax[0], "and", minmax[1],
+                              "in", (p[len(p)-1].time - p[0].time), "seconds")
+                        break
+
 
 def main():
     # Check if pcap or pcapng file name is provided
@@ -144,15 +159,18 @@ def main():
                 protocol_choice = input("Enter your choice: ")
                 if protocol_choice == '1':
                     for thisPacket in packets:
-                        process_packet(thisPacket, print_all=False, print_attacks=False, print_tcp=True, print_udp=False,
+                        process_packet(thisPacket, print_all=False, print_attacks=False, print_tcp=True,
+                                       print_udp=False,
                                        print_icmp=False)
                 elif protocol_choice == '2':
                     for thisPacket in packets:
-                        process_packet(thisPacket, print_all=False, print_attacks=False, print_tcp=False, print_udp=True,
+                        process_packet(thisPacket, print_all=False, print_attacks=False, print_tcp=False,
+                                       print_udp=True,
                                        print_icmp=False)
                 elif protocol_choice == '3':
                     for thisPacket in packets:
-                        process_packet(thisPacket, print_all=False, print_attacks=False, print_tcp=False, print_udp=False,
+                        process_packet(thisPacket, print_all=False, print_attacks=False, print_tcp=False,
+                                       print_udp=False,
                                        print_icmp=True)
                 elif protocol_choice == '4':
                     break
