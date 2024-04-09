@@ -5,6 +5,19 @@ from scapy.all import *
 from scapy.layers.dns import DNS, DNSQR
 from scapy.layers.inet import TCP, UDP, ICMP, IP
 from scapy.packet import *
+import sys
+import logging
+from scapy.all import *
+import pandas as pd
+from tabulate import tabulate
+from tqdm import tqdm
+import matplotlib.pyplot as plt
+import numpy as np
+
+
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(message)s')
+logger = logging.getLogger(__name__)
 
 # Initialize counters and state
 syn_counter = 0
@@ -102,7 +115,8 @@ def print_menu():
     print("1. Print all packets")
     print("2. Print only packets related to attacks")
     print("3. Print only TCP, UDP, or ICMP packets")
-    print("4. Exit")
+    print("4. Print packet capture statistics")
+    print("5. Exit")
 
 
 def print_protocol_menu():
@@ -152,6 +166,81 @@ class PortscanDetector:
                               "in", (p[len(p)-1].time - p[0].time), "seconds")
                         break
 
+def extract_packet_data(packets):
+    packet_data = []
+
+    for packet in tqdm(packets, desc="Processing packets", unit="packet"):
+        if IP in packet:
+            src_ip = packet[IP].src
+            dst_ip = packet[IP].dst
+            protocol = packet[IP].proto
+            size = len(packet)
+            packet_data.append({"src_ip": src_ip, "dst_ip": dst_ip, "protocol": protocol, "size": size})
+
+    return pd.DataFrame(packet_data)
+def print_results(total_bandwidth, protocol_counts_df, ip_communication_table, protocol_frequency, ip_communication_protocols):
+    # Convert bandwidth to Mbps or Gbps
+    if total_bandwidth < 10**9:
+        bandwidth_unit = "Mbps"
+        total_bandwidth /= 10**6
+    else:
+        bandwidth_unit = "Gbps"
+        total_bandwidth /= 10**9
+
+    logger.info(f"Total bandwidth used: {total_bandwidth:.2f} {bandwidth_unit}")
+    logger.info("\nProtocol Distribution:\n")
+    logger.info(tabulate(protocol_counts_df, headers=["Protocol", "Count", "Percentage"], tablefmt="grid"))
+    logger.info("\nTop IP Address Communications:\n")
+    logger.info(tabulate(ip_communication_table, headers=["Source IP", "Destination IP", "Count", "Percentage"], tablefmt="grid", floatfmt=".2f"))
+
+    logger.info("\nShare of each protocol between IPs:\n")
+    logger.info(tabulate(ip_communication_protocols, headers=["Source IP", "Destination IP", "Protocol", "Count", "Percentage"], tablefmt="grid", floatfmt=".2f"))
+
+def protocol_name(number):
+    protocol_dict = {1: 'ICMP', 6: 'TCP', 17: 'UDP'}
+    return protocol_dict.get(number, f"Unknown({number})")
+
+def analyze_packet_data(df):
+    total_bandwidth = df["size"].sum()
+    protocol_counts = df["protocol"].value_counts(normalize=True) * 100
+    protocol_counts.index = protocol_counts.index.map(protocol_name)
+
+    ip_communication = df.groupby(["src_ip", "dst_ip"]).size().sort_values(ascending=False)
+    ip_communication_percentage = ip_communication / ip_communication.sum() * 100
+    ip_communication_table = pd.concat([ip_communication, ip_communication_percentage], axis=1).reset_index()
+
+    protocol_frequency = df["protocol"].value_counts()
+    protocol_frequency.index = protocol_frequency.index.map(protocol_name)
+
+    protocol_counts_df = pd.concat([protocol_frequency, protocol_counts], axis=1).reset_index()
+    protocol_counts_df.columns = ["Protocol", "Count", "Percentage"]
+
+    ip_communication_protocols = df.groupby(["src_ip", "dst_ip", "protocol"]).size().reset_index()
+    ip_communication_protocols.columns = ["Source IP", "Destination IP", "Protocol", "Count"]
+    ip_communication_protocols["Protocol"] = ip_communication_protocols["Protocol"].apply(protocol_name)
+
+
+    ip_communication_protocols["Percentage"] = ip_communication_protocols.groupby(["Source IP", "Destination IP"])["Count"].apply(lambda x: x / x.sum() * 100)
+
+    return total_bandwidth, protocol_counts_df, ip_communication_table, protocol_frequency, ip_communication_protocols
+def extract_packet_data_security(packets):
+    packet_data = []
+
+    for packet in tqdm(packets, desc="Processing packets for port scanning activity", unit="packet"):
+        if IP in packet:
+            src_ip = packet[IP].src
+            dst_ip = packet[IP].dst
+            protocol = packet[IP].proto
+            size = len(packet)
+
+            if TCP in packet:
+                dst_port = packet[TCP].dport
+            else:
+                dst_port = 0
+
+            packet_data.append({"src_ip": src_ip, "dst_ip": dst_ip, "protocol": protocol, "size": size, "dst_port": dst_port})
+
+    return pd.DataFrame(packet_data)
 
 def main():
     # Check if pcap or pcapng file name is provided
@@ -200,6 +289,12 @@ def main():
                 else:
                     print("Invalid choice. Please enter a number between 1 and 4.")
         elif choice == '4':
+            df = extract_packet_data(packets)
+            total_bandwidth, protocol_counts, ip_communication_table, protocol_frequency, ip_communication_protocols = analyze_packet_data(df)
+            print_results(total_bandwidth, protocol_counts, ip_communication_table, protocol_frequency,
+                          ip_communication_protocols)
+
+        elif choice == '5':
             break
         else:
             print("Invalid choice. Please enter a number between 1 and 4.")
