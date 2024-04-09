@@ -25,6 +25,7 @@ syn_time = None  # Initialize syn_time to None
 udp_counter = 0
 icmp_counter = 0
 icmp_echo_reply_counter = 0
+icmp_time = None  # Initialize icmp_time to None
 slowloris_counter = {}
 port_scan_counter = {}
 slowloris_state = {}
@@ -32,7 +33,7 @@ dns_amplification_state = {}
 
 
 def process_packet(packet, print_all, print_attacks, print_tcp, print_udp, print_icmp):
-    global syn_counter, udp_counter, icmp_counter, icmp_echo_reply_counter, port_scan_counter, syn_time, slowloris_counter
+    global syn_counter, udp_counter, icmp_counter, icmp_echo_reply_counter, port_scan_counter, syn_time, slowloris_counter, icmp_time
     if print_all:
         print(f"Packet: {packet.summary()}")  # Print all packets
     if TCP in packet:
@@ -44,12 +45,14 @@ def process_packet(packet, print_all, print_attacks, print_tcp, print_udp, print
             else:
                 if packet.time - syn_time >= 1:  # If it's been at least one second since the last SYN packet
                     if syn_counter > 100:  # If more than 100 SYN packets were received in the last second
-                        print(f"Possible SYN flood detected: {packet.summary()}")
+                        if print_tcp or print_all or print_attacks:
+                            print(f"Possible SYN flood detected: {packet.summary()}")
                     syn_counter = 0  # Reset the counter
                     syn_time = packet.time  # Update the time
         # Check for Null, Xmas and FIN scans
         if packet[TCP].flags == 0 or packet[TCP].flags == 'FPU' or packet[TCP].flags == 'F':
-            print(f"Possible TCP Null, Xmas or FIN scan detected: {packet.summary()}")
+            if print_tcp or print_all or print_attacks:
+                print(f"Possible TCP Null, Xmas or FIN scan detected: {packet.summary()}")
         # Check for Slowloris attack
         if Raw in packet and packet[TCP].dport == 80 and not packet[Raw].load.endswith(b'\r\n\r\n'):
             ip_src = packet[IP].src
@@ -58,7 +61,8 @@ def process_packet(packet, print_all, print_attacks, print_tcp, print_udp, print
             else:
                 slowloris_counter[ip_src] += 1
             if slowloris_counter[ip_src] > 100:  # Threshold for Slowloris attack
-                print(f"Possible Slowloris attack detected from IP {ip_src}")
+                if print_tcp or print_all or print_attacks:
+                    print(f"Possible Slowloris attack detected from IP {ip_src}")
         if print_tcp:
             print(f"TCP Packet: {packet.summary()}")
 
@@ -66,7 +70,8 @@ def process_packet(packet, print_all, print_attacks, print_tcp, print_udp, print
     elif UDP in packet:
         # Check for UDP anomalies (e.g., large size)
         if packet[UDP].len > 1500:
-            print(f"Suspicious UDP packet detected: {packet.summary()}")
+            if print_udp or print_all or print_attacks:
+                print(f"Suspicious UDP packet detected: {packet.summary()}")
         # Check for UDP flood
         udp_counter += 1
         if udp_time is None:  # If this is the first UDP packet
@@ -74,7 +79,8 @@ def process_packet(packet, print_all, print_attacks, print_tcp, print_udp, print
         else:
             if packet.time - udp_time >= 1:  # If it's been at least one second since the last UDP packet
                 if udp_counter > 100:  # If more than 100 UDP packets were received in the last second
-                    print(f"Possible UDP flood detected: {packet.summary()}")
+                    if print_udp or print_all or print_attacks:
+                        print(f"Possible UDP flood detected: {packet.summary()}")
                 udp_counter = 0  # Reset the counter
                 udp_time = packet.time  # Update the time
         if DNS in packet and packet[DNS].qr == 0 and isinstance(packet[DNS].qd, DNSQR):
@@ -83,7 +89,8 @@ def process_packet(packet, print_all, print_attacks, print_tcp, print_udp, print
             else:
                 dns_amplification_state[packet[DNS].qd.qname] += 1
             if dns_amplification_state[packet[DNS].qd.qname] > 100:  # Threshold for DNS amplification attack
-                print(f"Possible DNS amplification attack detected: {packet.summary()}")
+                if print_udp or print_all or print_attacks:
+                    print(f"Possible DNS amplification attack detected: {packet.summary()}")
         if print_udp:
             print(f"UDP Packet: {packet.summary()}")
 
@@ -91,22 +98,24 @@ def process_packet(packet, print_all, print_attacks, print_tcp, print_udp, print
     elif ICMP in packet:
         # Check for ICMP anomalies (e.g., type and code)
         if packet[ICMP].type != 0 or packet[ICMP].code != 0:
-            print(f"Suspicious ICMP packet detected: {packet.summary()}")
+            if print_icmp or print_all or print_attacks:
+                print(f"Suspicious ICMP packet detected: {packet.summary()}")
         # Check for ICMP flood
         icmp_counter += 1
         if icmp_counter > 1000:  # Threshold for ICMP flood
-            print(f"Possible ICMP flood detected: {packet.summary()}")
-        # Check for potential Smurf attack
-        if packet[ICMP].type == 0:  # ICMP Echo Reply
-            icmp_echo_reply_counter += 1
-            if icmp_echo_reply_time is None:  # If this is the first ICMP Echo Reply packet
-                icmp_echo_reply_time = packet.time  # Set icmp_echo_reply_time to the packet's timestamp
-            else:
-                if packet.time - icmp_echo_reply_time >= 1:  # If it's been at least one second since the last ICMP Echo Reply packet
-                    if icmp_echo_reply_counter > 1000:  # If more than 1000 ICMP Echo Reply packets were received in the last second
-                        print(f"Potential Smurf attack detected: {packet.summary()}")
-                    icmp_echo_reply_counter = 0  # Reset the counter
-                    icmp_echo_reply_time = packet.time  # Update the time
+            if print_icmp or print_all or print_attacks:
+                print(f"Possible ICMP flood detected: {packet.summary()}")
+        # Check for ICMP flood
+        icmp_counter += 1
+        if icmp_time is None:  # If this is the first ICMP packet
+            icmp_time = packet.time  # Set icmp_time to the packet's timestamp
+        else:
+            if packet.time - icmp_time >= 1:  # If it's been at least one second since the last ICMP packet
+                if icmp_counter > 1000:  # If more than 1000 ICMP packets were received in the last second
+                    if print_icmp or print_all or print_attacks:
+                        print(f"Possible ICMP flood detected: {packet.summary()}")
+                icmp_counter = 0  # Reset the counter
+                icmp_time = packet.time  # Update the time
         if print_icmp:
             print(f"ICMP Packet: {packet.summary()}")
 
