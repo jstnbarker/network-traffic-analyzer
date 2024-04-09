@@ -24,7 +24,8 @@ syn_counter = 0
 syn_time = None  # Initialize syn_time to None
 udp_counter = 0
 icmp_counter = 0
-icmp_echo_reply_counter = 0
+smurf_counter = 0
+smurf_time = None  # Initialize smurf_time to None
 icmp_time = None  # Initialize icmp_time to None
 slowloris_counter = {}
 port_scan_counter = {}
@@ -33,7 +34,7 @@ dns_amplification_state = {}
 
 
 def process_packet(packet, print_all, print_attacks, print_tcp, print_udp, print_icmp):
-    global syn_counter, udp_counter, icmp_counter, icmp_echo_reply_counter, port_scan_counter, syn_time, slowloris_counter, icmp_time
+    global syn_counter, udp_counter, icmp_counter, port_scan_counter, syn_time, slowloris_counter, smurf_time, smurf_counter,icmp_time
     if print_all:
         print(f"Packet: {packet.summary()}")  # Print all packets
     if TCP in packet:
@@ -97,14 +98,19 @@ def process_packet(packet, print_all, print_attacks, print_tcp, print_udp, print
 
     elif ICMP in packet:
         # Check for ICMP anomalies (e.g., type and code)
-        if packet[ICMP].type != 0 or packet[ICMP].code != 0:
-            if print_icmp or print_all or print_attacks:
-                print(f"Suspicious ICMP packet detected: {packet.summary()}")
-        # Check for ICMP flood
-        icmp_counter += 1
-        if icmp_counter > 1000:  # Threshold for ICMP flood
-            if print_icmp or print_all or print_attacks:
-                print(f"Possible ICMP flood detected: {packet.summary()}")
+        
+        # Check for ICMP Smurf attack
+        if packet[ICMP].type == 8 and packet[IP].dst == '255.255.255.255':  # ICMP echo request with broadcast destination
+            smurf_counter += 1
+            if smurf_time is None:  # If this is the first potential Smurf packet
+                smurf_time = packet.time  # Set smurf_time to the packet's timestamp
+            else:
+                if packet.time - smurf_time >= 1:  # If it's been at least one second since the last potential Smurf packet
+                    if smurf_counter > 100:  # If more than 100 potential Smurf packets were received in the last second
+                        if print_icmp or print_all or print_attacks:
+                            print(f"Possible ICMP Smurf attack detected: {packet.summary()}")
+                    smurf_counter = 0  # Reset the counter
+                    smurf_time = packet.time  # Update the time
         # Check for ICMP flood
         icmp_counter += 1
         if icmp_time is None:  # If this is the first ICMP packet
