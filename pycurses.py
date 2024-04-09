@@ -30,13 +30,15 @@ smurf_time = None  # Initialize smurf_time to None
 icmp_time = None  # Initialize icmp_time to None
 dns_request_counter = 0
 dns_request_time = None  # Initialize dns_request_time to None
+fin_counter = 0
+fin_time = None  # Initialize fin_time to None
 slowloris_counter = {}
 port_scan_counter = {}
 slowloris_state = {}
 dns_amplification_state = {}
 
 def reset_counters():
-    global syn_counter, udp_counter, icmp_counter, port_scan_counter, syn_time, slowloris_counter, smurf_time, smurf_counter, icmp_time, udp_time, dns_request_counter, dns_request_time
+    global syn_counter, udp_counter, icmp_counter, port_scan_counter, syn_time, slowloris_counter, smurf_time, smurf_counter, icmp_time, udp_time, dns_request_counter, dns_request_time, fin_counter, fin_time 
     syn_counter = 0
     syn_time = None
     udp_counter = 0
@@ -47,14 +49,16 @@ def reset_counters():
     icmp_time = None
     dns_request_counter = 0
     dns_request_time = None
+    fin_counter = 0
+    fin_time = None  # Initialize fin_time to None
 
 
 def process_packet(packet, print_all, print_attacks, print_tcp, print_udp, print_icmp):
-    global syn_counter, udp_counter, icmp_counter, port_scan_counter, syn_time, slowloris_counter, smurf_time, smurf_counter,icmp_time, udp_time, dns_request_counter, dns_request_time
+    global syn_counter, udp_counter, icmp_counter, port_scan_counter, syn_time, slowloris_counter, smurf_time, smurf_counter,icmp_time, udp_time, dns_request_counter, dns_request_time, fin_counter, fin_time
     if print_all:
         print(f"Packet: {packet.summary()}")  # Print all packets
     if TCP in packet:
-        # Check for TCP anomalies (e.g., suspicious flags)
+        # Check for TCP SYN Flood
         if packet[TCP].flags == 'S':  # Check for SYN flag
             syn_counter += 1
             if syn_time is None:  # If this is the first SYN packet
@@ -66,10 +70,19 @@ def process_packet(packet, print_all, print_attacks, print_tcp, print_udp, print
                             print(f"Possible SYN flood detected: {packet.summary()}")
                     syn_counter = 0  # Reset the counter
                     syn_time = packet.time  # Update the time
-        # Check for Null, Xmas and FIN scans
-        if packet[TCP].flags == 0 or packet[TCP].flags == 'FPU' or packet[TCP].flags == 'F':
-            if print_tcp or print_all or print_attacks:
-                print(f"Possible TCP Null, Xmas or FIN scan detected: {packet.summary()}")
+        #Check for FIN Flood            
+        if packet[TCP].flags == 'F':  # Check for FIN flag
+            fin_counter += 1
+            if fin_time is None:  # If this is the first FIN packet
+                fin_time = packet.time  # Set fin_time to the packet's timestamp
+            else:
+                if packet.time - fin_time >= 1:  # If it's been at least one second since the last FIN packet
+                    if fin_counter > 50:  # If more than 100 FIN packets were received in the last second
+                        if print_tcp or print_all or print_attacks:
+                            print(f"Possible FIN flood detected: {packet.summary()}")
+                    fin_counter = 0  # Reset the counter
+                    fin_time = packet.time  # Update the time
+        
         # Check for Slowloris attack
         if Raw in packet and packet[TCP].dport == 80 and not packet[Raw].load.endswith(b'\r\n\r\n'):
             ip_src = packet[IP].src
