@@ -23,18 +23,34 @@ logger = logging.getLogger(__name__)
 syn_counter = 0
 syn_time = None  # Initialize syn_time to None
 udp_counter = 0
+udp_time = None  # Initialize udp_time to None
 icmp_counter = 0
 smurf_counter = 0
 smurf_time = None  # Initialize smurf_time to None
 icmp_time = None  # Initialize icmp_time to None
+dns_request_counter = 0
+dns_request_time = None  # Initialize dns_request_time to None
 slowloris_counter = {}
 port_scan_counter = {}
 slowloris_state = {}
 dns_amplification_state = {}
 
+def reset_counters():
+    global syn_counter, udp_counter, icmp_counter, port_scan_counter, syn_time, slowloris_counter, smurf_time, smurf_counter, icmp_time, udp_time, dns_request_counter, dns_request_time
+    syn_counter = 0
+    syn_time = None
+    udp_counter = 0
+    udp_time = None
+    icmp_counter = 0
+    smurf_counter = 0
+    smurf_time = None
+    icmp_time = None
+    dns_request_counter = 0
+    dns_request_time = None
+
 
 def process_packet(packet, print_all, print_attacks, print_tcp, print_udp, print_icmp):
-    global syn_counter, udp_counter, icmp_counter, port_scan_counter, syn_time, slowloris_counter, smurf_time, smurf_counter,icmp_time
+    global syn_counter, udp_counter, icmp_counter, port_scan_counter, syn_time, slowloris_counter, smurf_time, smurf_counter,icmp_time, udp_time, dns_request_counter, dns_request_time
     if print_all:
         print(f"Packet: {packet.summary()}")  # Print all packets
     if TCP in packet:
@@ -84,6 +100,19 @@ def process_packet(packet, print_all, print_attacks, print_tcp, print_udp, print
                         print(f"Possible UDP flood detected: {packet.summary()}")
                 udp_counter = 0  # Reset the counter
                 udp_time = packet.time  # Update the time
+
+        if DNS in packet and packet[DNS].qr == 0:  # Check if the packet is a DNS request
+            dns_request_counter += 1
+            if dns_request_time is None:  # If this is the first DNS request packet
+                dns_request_time = packet.time  # Set dns_request_time to the packet's timestamp
+            else:
+                if packet.time - dns_request_time >= 1:  # If it's been at least one second since the last DNS request packet
+                    if dns_request_counter > 10:  # If more than 100 DNS request packets were received in the last second
+                        if print_all or print_attacks or print_udp:
+                            print(f"Possible DNS request flood detected: {packet.summary()}")
+                    dns_request_counter = 0  # Reset the counter
+                    dns_request_time = packet.time  # Update the time
+
         if DNS in packet and packet[DNS].qr == 0 and isinstance(packet[DNS].qd, DNSQR):
             if packet[DNS].qd.qname not in dns_amplification_state:
                 dns_amplification_state[packet[DNS].qd.qname] = 1
@@ -272,6 +301,7 @@ def main():
     while True:
         print_menu()
         choice = input("Enter your choice: ")
+        reset_counters()
         if choice == '1':
             for thisPacket in packets:
                 process_packet(thisPacket, print_all=True, print_attacks=False, print_tcp=False, print_udp=False,
