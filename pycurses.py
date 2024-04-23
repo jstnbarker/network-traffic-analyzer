@@ -114,6 +114,7 @@ def process_packet(packet, print_all, print_attacks, print_tcp, print_udp, print
                 udp_counter = 0  # Reset the counter
                 udp_time = packet.time  # Update the time
 
+        #DNS Request Flood
         if DNS in packet and packet[DNS].qr == 0:  # Check if the packet is a DNS request
             dns_request_counter += 1
             if dns_request_time is None:  # If this is the first DNS request packet
