@@ -36,6 +36,7 @@ slowloris_counter = {}
 port_scan_counter = {}
 slowloris_state = {}
 dns_amplification_state = {}
+dns_amplification_rate = {}
 
 def reset_counters():
     global syn_counter, udp_counter, icmp_counter, port_scan_counter, syn_time, slowloris_counter, smurf_time, smurf_counter, icmp_time, udp_time, dns_request_counter, dns_request_time, fin_counter, fin_time 
@@ -119,7 +120,7 @@ def process_packet(packet, print_all, print_attacks, print_tcp, print_udp, print
                 dns_request_time = packet.time  # Set dns_request_time to the packet's timestamp
             else:
                 if packet.time - dns_request_time >= 1:  # If it's been at least one second since the last DNS request packet
-                    if dns_request_counter > 100:  # If more than 100 DNS request packets were received in the last second
+                    if dns_request_counter > 10:  # If more than 100 DNS request packets were received in the last second
                         if print_all or print_attacks or print_udp:
                             print(f"Possible DNS request flood detected: {packet.summary()}")
                     dns_request_counter = 0  # Reset the counter
@@ -130,9 +131,14 @@ def process_packet(packet, print_all, print_attacks, print_tcp, print_udp, print
             ip_src = packet[IP].src
             if ip_src not in dns_amplification_state:
                 dns_amplification_state[ip_src] = 1
+                dns_amplification_rate[ip_src] = packet.time
             else:
-                dns_amplification_state[ip_src] += 1
-            if dns_amplification_state[ip_src] > 100:  # Threshold for DNS amplification attack
+                if packet.time - dns_amplification_rate[ip_src] < 1:  # Check if the time difference is less than 1 second
+                    dns_amplification_state[ip_src] += 1
+                else:
+                    dns_amplification_state[ip_src] = 1  # Reset the counter
+                dns_amplification_rate[ip_src] = packet.time  # Update the time
+            if dns_amplification_state[ip_src] > 1000:  # Threshold for DNS amplification attack
                 if print_udp or print_all or print_attacks:
                     print(f"Possible DNS amplification attack detected: {packet.summary()}")
 
@@ -141,12 +147,16 @@ def process_packet(packet, print_all, print_attacks, print_tcp, print_udp, print
             ip_src = packet[IP].src
             if ip_src not in dns_amplification_state:
                 dns_amplification_state[ip_src] = 1
+                dns_amplification_rate[ip_src] = packet.time
             else:
-                dns_amplification_state[ip_src] += 1
-            if dns_amplification_state[ip_src] > 100:  # Threshold for DNS amplification attack
+                if packet.time - dns_amplification_rate[ip_src] < 1:  # Check if the time difference is less than 1 second
+                    dns_amplification_state[ip_src] += 1
+                else:
+                    dns_amplification_state[ip_src] = 1  # Reset the counter
+                dns_amplification_rate[ip_src] = packet.time  # Update the time
+            if dns_amplification_state[ip_src] > 1000:  # Threshold for DNS amplification attack
                 if print_udp or print_all or print_attacks:
                     print(f"Possible DNS amplification attack detected: {packet.summary()}")
-
         if print_udp:
             print(f"UDP Packet: {packet.summary()}")
 
@@ -166,17 +176,18 @@ def process_packet(packet, print_all, print_attacks, print_tcp, print_udp, print
                             print(f"Possible ICMP Smurf attack detected: {packet.summary()}")
                     smurf_counter = 0  # Reset the counter
                     smurf_time = packet.time  # Update the time
-        # Check for ICMP flood
-        icmp_counter += 1
-        if icmp_time is None:  # If this is the first ICMP packet
-            icmp_time = packet.time  # Set icmp_time to the packet's timestamp
-        else:
-            if packet.time - icmp_time >= 1:  # If it's been at least one second since the last ICMP packet
-                if icmp_counter > 100:  # If more than 1000 ICMP packets were received in the last second
-                    if print_icmp or print_all or print_attacks:
-                        print(f"Possible ICMP flood detected: {packet.summary()}")
-                icmp_counter = 0  # Reset the counter
-                icmp_time = packet.time  # Update the time
+        elif not packet[IP].dst.endswith('.255'):
+            # Check for ICMP flood
+            icmp_counter += 1
+            if icmp_time is None:  # If this is the first ICMP packet
+                icmp_time = packet.time  # Set icmp_time to the packet's timestamp
+            else:
+                if packet.time - icmp_time >= 1:  # If it's been at least one second since the last ICMP packet
+                    if icmp_counter > 1000:  # If more than 1000 ICMP packets were received in the last second
+                        if print_icmp or print_all or print_attacks:
+                            print(f"Possible ICMP flood detected: {packet.summary()}")
+                    icmp_counter = 0  # Reset the counter
+                    icmp_time = packet.time  # Update the time
         if print_icmp:
             print(f"ICMP Packet: {packet.summary()}")
 
