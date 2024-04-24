@@ -120,7 +120,7 @@ def process_packet(packet, print_all, print_attacks, print_tcp, print_udp, print
                 dns_request_time = packet.time  # Set dns_request_time to the packet's timestamp
             else:
                 if packet.time - dns_request_time >= 1:  # If it's been at least one second since the last DNS request packet
-                    if dns_request_counter > 10:  # If more than 100 DNS request packets were received in the last second
+                    if dns_request_counter > 10:  # If more than 10 DNS request packets were received in the last second
                         if print_all or print_attacks or print_udp:
                             print(f"Possible DNS request flood detected: {packet.summary()}")
                     dns_request_counter = 0  # Reset the counter
